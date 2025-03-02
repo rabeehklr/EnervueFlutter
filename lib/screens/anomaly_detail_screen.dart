@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../models/appliance.dart';
 import 'package:charts_flutter/flutter.dart' as charts;
+import '../models/appliance.dart';
 
 class AnomalyDetailScreen extends StatelessWidget {
   final Appliance appliance;
@@ -9,17 +9,6 @@ class AnomalyDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Sample data for the week - replace with actual data
-    final weeklyAnomalies = [
-      {'day': 'Mon', 'count': 2},
-      {'day': 'Tue', 'count': 1},
-      {'day': 'Wed', 'count': 3},
-      {'day': 'Thu', 'count': 0},
-      {'day': 'Fri', 'count': 2},
-      {'day': 'Sat', 'count': 1},
-      {'day': 'Sun', 'count': 2},
-    ];
-
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
@@ -61,7 +50,7 @@ class AnomalyDetailScreen extends StatelessWidget {
                       children: [
                         _buildStatColumn(
                           'Detections Today',
-                          '3',
+                          '${appliance.anomaliesToday}',
                           Icons.warning_amber_rounded,
                           Colors.orange,
                         ),
@@ -112,7 +101,7 @@ class AnomalyDetailScreen extends StatelessWidget {
                             data['day'] as String,
                             measureFn: (Map<String, dynamic> data, _) =>
                             data['count'] as int,
-                            data: weeklyAnomalies,
+                            data: appliance.weeklyAnomalies,
                           ),
                         ],
                         animate: true,

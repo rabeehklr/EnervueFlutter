@@ -1,36 +1,86 @@
-// lib/providers/real_time_data_provider.dart
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:socket_io_client/socket_io_client.dart' as IO;
 import '../models/appliance.dart';
 import '../models/consumption_data.dart';
+import '../notification_service.dart';
+import 'package:http/http.dart' as http;
 
 class RealTimeDataProvider with ChangeNotifier {
-  WebSocketChannel? _channel;
+  IO.Socket? _socket;
   bool _isConnected = false;
   Map<String, dynamic> _latestData = {};
-
-  // Number of reconnection attempts
+  final NotificationService _notificationService = NotificationService();
+  Map<String, bool> _notificationSettings = {};
   int _reconnectAttempts = 0;
-  static const int maxReconnectAttempts = 5;
+  static const int maxReconnectAttempts = 50;
+  static const String baseUrl = 'http://192.168.62.152:5001';
+
+  // Dynamic consumption limits, default values can be overridden by user
+  Map<String, double> _consumptionLimits = {
+    'bulb': 65.0,
+    'laptop charger': 150.0,
+    'unknown': double.infinity,
+  };
 
   bool get isConnected => _isConnected;
   Map<String, dynamic> get latestData => _latestData;
-
   List<Appliance> _appliances = [];
   List<Appliance> get appliances => _appliances;
 
-  String getWebSocketUrl() {
-    // If running on Android emulator, use 10.0.2.2 instead of localhost
-    // If running on iOS simulator, use localhost
-    // For physical devices, use your computer's actual IP address
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      return 'ws://10.0.2.2:8000/ws';
-    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-      return 'ws://localhost:8000/ws';
-    } else {
-      return 'ws://localhost:8000/ws';
+  RealTimeDataProvider() {
+    initialize();
+  }
+
+  void initialize() async {
+    await _notificationService.initialize();
+    connectToServer();
+    _notificationSettings['laptop charger'] = true;
+    _notificationSettings['bulb'] = true;
+    print('Initialized with limits: $_consumptionLimits');
+  }
+
+  // Method to update consumption limit for an appliance
+  void updateConsumptionLimit(String applianceName, double limit) {
+    _consumptionLimits[applianceName.toLowerCase()] = limit;
+    syncLimitWithBackend(applianceName, limit); // Sync with backend
+    notifyListeners();
+    print('Updated limit for $applianceName to $limit');
+    _updateData(_latestData); // Reprocess data with new limits
+  }
+
+  // Method to get the current limit for an appliance
+  double getConsumptionLimit(String applianceName) {
+    return _consumptionLimits[applianceName.toLowerCase()] ?? double.infinity;
+  }
+
+  Future<void> syncLimitWithBackend(String applianceName, double limit) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/update-limit'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'appliance_name': applianceName,
+          'limit': limit,
+        }),
+      );
+      if (response.statusCode == 200) {
+        print('Successfully synced limit for $applianceName with backend');
+      } else {
+        print('Failed to sync limit: ${response.body}');
+      }
+    } catch (e) {
+      print('Error syncing limit with backend: $e');
     }
+  }
+
+  void toggleNotifications(String applianceName, bool enabled) {
+    _notificationSettings[applianceName.toLowerCase()] = enabled;
+    notifyListeners();
+  }
+
+  bool isNotificationEnabled(String applianceName) {
+    return _notificationSettings[applianceName.toLowerCase()] ?? false;
   }
 
   void connectToServer() {
@@ -38,94 +88,228 @@ class RealTimeDataProvider with ChangeNotifier {
       print('Max reconnection attempts reached');
       return;
     }
-
     try {
-      final wsUrl = getWebSocketUrl();
-      print('Connecting to WebSocket at: $wsUrl');
-
-      _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
-
-      _channel!.stream.listen(
-            (message) {
-          final data = jsonDecode(message);
-          _updateData(data);
-          _isConnected = true;
-          _reconnectAttempts = 0; // Reset attempts on successful connection
-          notifyListeners();
-        },
-        onError: (error) {
-          print('WebSocket error: $error');
-          _handleConnectionError();
-        },
-        onDone: () {
-          print('WebSocket connection closed');
-          _handleConnectionError();
-        },
-      );
+      _socket = IO.io(baseUrl, <String, dynamic>{
+        'transports': ['websocket'],
+        'autoConnect': true,
+        'reconnection': true,
+        'reconnectionDelay': 1000,
+        'reconnectionDelayMax': 5000,
+        'reconnectionAttempts': maxReconnectAttempts,
+      });
+      _setupSocketListeners();
     } catch (e) {
-      print('Error connecting to WebSocket: $e');
+      print('Error connecting to Socket.IO server: $e');
       _handleConnectionError();
     }
+  }
+
+  void _setupSocketListeners() {
+    _socket?.onConnect((_) {
+      print('Connected to Socket.IO server');
+      _isConnected = true;
+      _reconnectAttempts = 0;
+      notifyListeners();
+    });
+    _socket?.onDisconnect((_) {
+      print('Disconnected from Socket.IO server');
+      _isConnected = false;
+      notifyListeners();
+    });
+    _socket?.onConnectError((error) {
+      print('Connection error: $error');
+      _handleConnectionError();
+    });
+    _socket?.onError((error) {
+      print('Socket error: $error');
+    });
+    _socket?.on('real_time_data', (data) {
+      print('Received real-time data: $data');
+      _updateData(data);
+    });
   }
 
   void _handleConnectionError() {
     _isConnected = false;
     _reconnectAttempts++;
     notifyListeners();
-
-    // Try to reconnect after 5 seconds if max attempts not reached
     if (_reconnectAttempts < maxReconnectAttempts) {
-      Future.delayed(const Duration(seconds: 5), connectToServer);
+      Future.delayed(Duration(seconds: 5), () {
+        print('Attempting to reconnect... (Attempt $_reconnectAttempts)');
+        connectToServer();
+      });
     }
   }
 
   void _updateData(Map<String, dynamic> data) {
     _latestData = data;
+    try {
+      List<dynamic> activeAppliances = data['active_appliances'] ?? [];
+      List<dynamic> inactiveAppliances = data['inactive_appliances'] ?? [];
+      List<dynamic> allApplianceData = [...activeAppliances, ...inactiveAppliances];
 
-    _appliances = (data['appliances'] as List).map((applianceData) {
-      double kWh = applianceData['current_power'] / 1000;
+      print('Consumption limits: $_consumptionLimits');
 
-      List<ConsumptionData> weeklyData = [
-        ConsumptionData(day: 'Mon', usage: (kWh * 24).round()),
-        ConsumptionData(day: 'Tue', usage: (kWh * 24).round()),
-        ConsumptionData(day: 'Wed', usage: (kWh * 24).round()),
-        ConsumptionData(day: 'Thu', usage: (kWh * 24).round()),
-        ConsumptionData(day: 'Fri', usage: (kWh * 24).round()),
-        ConsumptionData(day: 'Sat', usage: (kWh * 24).round()),
-        ConsumptionData(day: 'Sun', usage: (kWh * 24).round()),
-      ];
+      _appliances = allApplianceData.map((applianceData) {
+        String rawName = applianceData['name'];
+        double currentPower = applianceData['current_power'].toDouble();
+        double kWh = double.tryParse(applianceData['consumption'] ?? '0') ?? 0;
+        String name = rawName.toLowerCase().trim();
+        double limit = getConsumptionLimit(name);
+        bool isAnomalyFromBackend = applianceData['anomaly'] ?? false;
+        bool customAnomaly = currentPower > limit;
+        bool notificationsEnabled = isNotificationEnabled(name);
+        bool isOn = applianceData['status'] == 'on';
 
-      // Weekly anomalies data
-      List<Map<String, dynamic>> weeklyAnomalies = [
-        {'day': 'Mon', 'count': 2},
-        {'day': 'Tue', 'count': 1},
-        {'day': 'Wed', 'count': 3},
-        {'day': 'Thu', 'count': 0},
-        {'day': 'Fri', 'count': 2},
-        {'day': 'Sat', 'count': 1},
-        {'day': 'Sun', 'count': 2},
-      ];
+        print('Checking $name: currentPower=$currentPower, limit=$limit, '
+            'isAnomalyFromBackend=$isAnomalyFromBackend, customAnomaly=$customAnomaly, '
+            'notificationsEnabled=$notificationsEnabled, isOn=$isOn');
 
-      return Appliance(
-        name: applianceData['name'],
-        consumption: '${kWh.toStringAsFixed(2)} kWh',
-        usageTime: '${applianceData["time_used"]} mins',
-        imageAsset: 'assets/${applianceData["name"].toLowerCase()}.png',
-        data: weeklyData,
-        isOn: applianceData['status'] == 'on',
-        avgPower: '${(applianceData['current_power'] as num).round()}W',
-        peakPower: '${(applianceData['peak_power'] ?? applianceData['current_power'] * 1.2).round()}W',
-        onOffCycles: '${applianceData['cycles'] ?? 0} times',
-        anomaly: applianceData['anomaly'] ?? false,
-        anomaliesToday: applianceData['anomalies_today'] ?? 0,
-        weeklyAnomalies: weeklyAnomalies,
-      );
-    }).toList();
+        if ((isAnomalyFromBackend || customAnomaly) && notificationsEnabled && isOn) {
+          print('Triggering notification for $name');
+          _notificationService.showAnomalyNotification(
+            applianceName: name,
+            playSound: true,
+            context: null,
+          );
+        }
 
-    notifyListeners();
+        return Appliance(
+          name: name,
+          consumption: '${kWh.toStringAsFixed(3)} Wh',
+          usageTime: '${applianceData["time_used"]} mins',
+          imageAsset: 'assets/images/$name.png',
+          data: _processWeeklyData(applianceData['weekly_data']),
+          isOn: isOn,
+          avgPower: '${currentPower.round()}W',
+          peakPower: '${(applianceData["peak_power"] ?? 0).round()}W',
+          onOffCycles: '${applianceData['cycles'] ?? 0} times',
+          anomaly: isAnomalyFromBackend || customAnomaly,
+          anomaliesToday: applianceData['anomalies_today'] ?? 0,
+          weeklyAnomalies: _processWeeklyAnomalies(applianceData['weekly_anomalies']),
+        );
+      }).toList();
+
+      notifyListeners();
+    } catch (e) {
+      print('Error processing appliance data: $e');
+    }
   }
 
+  List<ConsumptionData> _processWeeklyData(dynamic weeklyData) {
+    if (weeklyData == null || weeklyData is! List) {
+      return _getDefaultWeeklyData();
+    }
+    try {
+      return weeklyData.map<ConsumptionData>((data) {
+        return ConsumptionData(
+          day: data['day'] as String,
+          usage: (data['usage'] as num).toDouble(),
+        );
+      }).toList();
+    } catch (e) {
+      print('Error processing weekly data: $e');
+      return _getDefaultWeeklyData();
+    }
+  }
+
+  List<ConsumptionData> _getDefaultWeeklyData() {
+    return [
+      ConsumptionData(day: 'Mon', usage: 0.0),
+      ConsumptionData(day: 'Tue', usage: 0.0),
+      ConsumptionData(day: 'Wed', usage: 0.0),
+      ConsumptionData(day: 'Thu', usage: 0.0),
+      ConsumptionData(day: 'Fri', usage: 0.0),
+      ConsumptionData(day: 'Sat', usage: 0.0),
+      ConsumptionData(day: 'Sun', usage: 0.0),
+    ];
+  }
+
+  List<Map<String, dynamic>> _processWeeklyAnomalies(dynamic weeklyAnomalies) {
+    if (weeklyAnomalies == null || weeklyAnomalies is! List) {
+      return _getDefaultWeeklyAnomalies();
+    }
+    try {
+      return List<Map<String, dynamic>>.from(weeklyAnomalies);
+    } catch (e) {
+      print('Error processing weekly anomalies: $e');
+      return _getDefaultWeeklyAnomalies();
+    }
+  }
+
+  List<Map<String, dynamic>> _getDefaultWeeklyAnomalies() {
+    return [
+      {'day': 'Mon', 'count': 0},
+      {'day': 'Tue', 'count': 0},
+      {'day': 'Wed', 'count': 0},
+      {'day': 'Thu', 'count': 0},
+      {'day': 'Fri', 'count': 0},
+      {'day': 'Sat', 'count': 0},
+      {'day': 'Sun', 'count': 0},
+    ];
+  }
+
+  Future<List<ConsumptionData>> fetchHistoricalData(
+      String applianceName, DateTime startDate, DateTime endDate) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/historical-data'
+            '?appliance_name=$applianceName'
+            '&start_date=${startDate.toIso8601String()}'
+            '&end_date=${endDate.toIso8601String()}'),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return (data['data'] as List).map((item) {
+          return ConsumptionData(
+            day: item['day'],
+            usage: (item['usage'] as num).toDouble(),
+          );
+        }).toList();
+      } else {
+        throw Exception('Failed to fetch historical data');
+      }
+    } catch (e) {
+      print('Error fetching historical data: $e');
+      return _getDefaultWeeklyData();
+    }
+  }
+
+  Future<Map<String, dynamic>> fetchCostEstimation(
+      List<String> appliances, String duration) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/cost-estimation'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'appliances': appliances.map((name) => {'name': name}).toList(),
+          'duration': duration,
+        }),
+      );
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      } else {
+        throw Exception('Failed to fetch cost estimation');
+      }
+    } catch (e) {
+      print('Error fetching cost estimation: $e');
+      return {'estimates': [], 'total_cost': 0.0};
+    }
+  }
+
+  List<Appliance> getActiveAppliances() {
+    return _appliances.where((appliance) => appliance.isOn).toList();
+  }
+
+  List<Appliance> getInactiveAppliances() {
+    return _appliances.where((appliance) => !appliance.isOn).toList();
+  }
+
+  @override
   void dispose() {
-    _channel?.sink.close();
+    _socket?.disconnect();
+    _socket?.dispose();
+    _notificationService.dispose();
+    super.dispose();
   }
 }

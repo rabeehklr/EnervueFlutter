@@ -1,10 +1,6 @@
-// splash_screen.dart
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'dart:async';
 import 'login_screen.dart';
-import 'home_page.dart';
-import '../auth_service.dart';
 
 class SplashScreen extends StatefulWidget {
   @override
@@ -15,17 +11,16 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    _navigateToNextScreen();
+    _navigateToLogin();
   }
 
-  _navigateToNextScreen() async {
+  _navigateToLogin() async {
     await Future.delayed(Duration(seconds: 3));
     if (mounted) {
-      final authService = Provider.of<AuthService>(context, listen: false);
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => authService.isAuthenticated ? HomePage() : const LoginScreen(),
+          builder: (context) => const LoginScreen(),
         ),
       );
     }

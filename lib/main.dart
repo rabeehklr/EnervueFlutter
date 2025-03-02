@@ -1,3 +1,4 @@
+import 'package:final_project_app/providers/electricity_rate_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -20,6 +21,7 @@ void main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
         ChangeNotifierProvider(create: (_) => RealTimeDataProvider()),
+        ChangeNotifierProvider(create: (_) => ElectricityRateProvider()),
       ],
       child: const MyApp(),
     ),

@@ -71,7 +71,7 @@ class ApplianceDetailScreen extends StatelessWidget {
                       icon: Icons.speed,
                       iconColor: Colors.orange,
                       title: 'Avg. Power',
-                      value: '850W',  // Replace with actual data
+                      value: appliance.avgPower,  // Replace with actual data
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -80,7 +80,7 @@ class ApplianceDetailScreen extends StatelessWidget {
                       icon: Icons.bolt,
                       iconColor: Colors.red,
                       title: 'Peak Power',
-                      value: '1200W',  // Replace with actual data
+                      value: appliance.peakPower,  // Replace with actual data
                     ),
                   ),
                 ],
@@ -95,7 +95,7 @@ class ApplianceDetailScreen extends StatelessWidget {
                       icon: Icons.replay_circle_filled,
                       iconColor: Colors.purple,
                       title: 'ON/OFF Cycles',
-                      value: '8 times',  // Replace with actual data
+                      value: appliance.onOffCycles,  // Replace with actual data
                     ),
                   ),
                   const Expanded(child: SizedBox()), // Empty space for alignment

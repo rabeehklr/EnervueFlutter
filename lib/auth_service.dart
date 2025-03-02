@@ -6,12 +6,8 @@ class AuthService extends ChangeNotifier {
   User? _user;
   bool _isLoading = false;
 
-  AuthService() {
-    _auth.authStateChanges().listen((user) {
-      _user = user;
-      notifyListeners();
-    });
-  }
+  // Remove the constructor listener since we don't want to persist the auth state
+  AuthService();
 
   User? get currentUser => _user;
   bool get isAuthenticated => _user != null;
@@ -22,10 +18,12 @@ class AuthService extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
-      await _auth.signInWithEmailAndPassword(
+      // Sign in without persistence
+      final userCredential = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
+      _user = userCredential.user;
 
       return null;
     } on FirebaseAuthException catch (e) {
@@ -39,6 +37,8 @@ class AuthService extends ChangeNotifier {
   Future<void> signOut() async {
     try {
       await _auth.signOut();
+      _user = null;
+      notifyListeners();
     } catch (e) {
       print('Error signing out: $e');
     }

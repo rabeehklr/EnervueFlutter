@@ -359,7 +359,7 @@ class HomeContent extends StatelessWidget {
   final List<Appliance> appliances = [
     Appliance(
       name: 'Fan',
-      consumption: '50 kWh',
+      consumption: '50 Wh',
       usageTime: '30 hours',
       imageAsset: 'assets/fan.jpg',
       data: [

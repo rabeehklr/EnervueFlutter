@@ -87,7 +87,7 @@ class ConsumptionGraph extends StatelessWidget {
                 ),
                 behaviors: [
                   charts.ChartTitle(
-                    'Daily Usage (kWh)',
+                    'Daily Usage (Wh)',
                     behaviorPosition: charts.BehaviorPosition.start,
                     titleStyleSpec: charts.TextStyleSpec(
                       fontSize: 12,
@@ -102,7 +102,7 @@ class ConsumptionGraph extends StatelessWidget {
                     showMeasures: true,
                     measureFormatter: (num? value) {
                       if (value == null) return '-';
-                      return '${value.toInt()} kWh';
+                      return '${value.toInt()} Wh';
                     },
                   ),
                   charts.LinePointHighlighter(
